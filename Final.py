@@ -1,7 +1,22 @@
 # V7.2 FINAL - GOLD LONDON ORB + 4-PILLARS RETEST + 1:3
-# Render pe chalega - Telegram Alert dega
-import yfinance as yf, pandas as pd, time, os, requests
-from datetime import datetime, timezone
+# FREE Render Web Service ke liye - Port wala jugad included hai
+
+import os, time, requests
+import yfinance as yf, pandas as pd
+import threading
+from flask import Flask
+
+# --- 1. NAKLI WEBSITE - Render ko khush karne ke liye ---
+# Ye sirf Render ko dikhane ke liye hai ki Port khula hai, bot ka kaam nahi rokega
+app = Flask(__name__)
+@app.route('/')
+def home():
+    return "V7.2 FINAL Bot Running ✅ - GOLD 1:3"
+def run_flask():
+    port = int(os.getenv("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+threading.Thread(target=run_flask, daemon=True).start()
+# --- Jugad khatam ---
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -19,17 +34,15 @@ def get_data():
     return df.dropna()
 
 sent_orb = None
-trade = None  # {'dir':, 'entry':, 'sl':, 'tp1':, 'tp2':, 'booked': False}
+trade = None
 
 send("✅ V7.2 FINAL START - GOLD 1:3 | Retest + Partial Booking ON")
 
 while True:
     try:
         df = get_data()
-        # Aaj ka data - UTC me 08:00 = IST 1:30
         today = df.index[-1].date()
         day = df[df.index.date == today]
-        # ORB banao
         orb = day[day.index.hour == 8]
         if len(orb) >= 2:
             orb_high = float(orb['High'].max()); orb_low = float(orb['Low'].min())
@@ -39,20 +52,15 @@ while True:
                 sent_orb = key
                 send(f"🟡 GOLD ORB BAN GAYA\nHigh: {orb_high:.1f}\nLow: {orb_low:.1f}\nRange: {rng:.1f}$\nAb Breakout + Retest ka wait hai. Bina Retest ke NO ENTRY.")
             
-            # Live price
             last = day.iloc[-1]
             price = float(last['Close']); low = float(last['Low']); high = float(last['High'])
 
-            # Agar koi trade nahi hai, to Breakout + Retest dhoondo
             if trade is None and 8 <= rng <= 35:
-                # Simple logic: Price ORB ke bahar band hua aur wapas ORB ke paas aaya
-                # Yahan hum 15m candle close pe check kar rahe hai
                 if price > orb_high and low <= orb_high + 1.5:
-                    # BUY Retest mil gaya
                     entry = price; sl = orb_low
                     risk = entry - sl
-                    tp1 = entry + risk * 2  # 1:2
-                    tp2 = entry + risk * 3  # 1:3
+                    tp1 = entry + risk * 2
+                    tp2 = entry + risk * 3
                     trade = {'dir':'BUY','entry':entry,'sl':sl,'tp1':tp1,'tp2':tp2,'booked':False}
                     send(f"🚀 GOLD BUY ENTRY - V7.2\nEntry: {entry:.1f}\nSL: {sl:.1f}\nTP1 (1:2): {tp1:.1f} - Yahan 50% Book\nTP2 (1:3): {tp2:.1f} - Yahan Baaki Book\nRisk: {risk:.1f}$")
                 elif price < orb_low and high >= orb_low - 1.5:
@@ -63,13 +71,12 @@ while True:
                     trade = {'dir':'SELL','entry':entry,'sl':sl,'tp1':tp1,'tp2':tp2,'booked':False}
                     send(f"🔻 GOLD SELL ENTRY - V7.2\nEntry: {entry:.1f}\nSL: {sl:.1f}\nTP1 (1:2): {tp1:.1f}\nTP2 (1:3): {tp2:.1f}\nRisk: {risk:.1f}$")
 
-            # Agar trade chal raha hai, to TP1 / TP2 / SL check karo
             if trade is not None:
                 d = trade['dir']
                 if d == 'BUY':
                     if not trade['booked'] and high >= trade['tp1']:
                         trade['booked'] = True; trade['sl'] = trade['entry']
-                        send(f"✅ GOLD TP1 HIT (1:2)\nPrice: {trade['tp1']:.1f}\n50% Profit Book Karo!\nSL ko Entry ({trade['entry']:.1f}) pe le aao. Ab trade NO LOSS hai.\nNext Target TP2: {trade['tp2']:.1f}")
+                        send(f"✅ GOLD TP1 HIT (1:2)\nPrice: {trade['tp1']:.1f}\n50% Profit Book Karo!\nSL ko Entry ({trade['entry']:.1f}) pe le aao. Ab NO LOSS hai.\nNext TP2: {trade['tp2']:.1f}")
                     elif trade['booked'] and high >= trade['tp2']:
                         send(f"🎉 GOLD TP2 HIT (1:3) - FULL PROFIT!\nPrice: {trade['tp2']:.1f}\nBaaki 50% bhi Book Karo. Trade Khatam.")
                         trade = None
@@ -79,7 +86,7 @@ while True:
                         else:
                             send(f"❌ GOLD SL HIT - Loss: {trade['entry']-trade['sl']:.1f}$")
                         trade = None
-                else: # SELL
+                else:
                     if not trade['booked'] and low <= trade['tp1']:
                         trade['booked'] = True; trade['sl'] = trade['entry']
                         send(f"✅ GOLD TP1 HIT (1:2)\nPrice: {trade['tp1']:.1f}\n50% Profit Book Karo!\nSL to Entry. Ab NO LOSS.")
@@ -94,4 +101,4 @@ while True:
                         trade = None
     except Exception as e:
         print("Error:", e)
-    time.sleep(60) # Har 1 min me check karega
+    time.sleep(60)
