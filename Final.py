@@ -1,144 +1,97 @@
-import os
-import threading
-import time
-import requests
-import yfinance as yf
-import pandas as pd
-from datetime import datetime
-import pytz
-from flask import Flask
+# V7.2 FINAL - GOLD LONDON ORB + 4-PILLARS RETEST + 1:3
+# Render pe chalega - Telegram Alert dega
+import yfinance as yf, pandas as pd, time, os, requests
+from datetime import datetime, timezone
 
-# --- 1. RENDER KE LIYE WEB PORT (Isse Render band nahi karega) ---
-app = Flask(__name__)
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-@app.route('/')
-def home():
-    return "Bot is Live - STAR PRO V5"
+def send(msg):
+    if TOKEN and CHAT_ID:
+        try: requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", data={"chat_id": CHAT_ID, "text": msg}, timeout=10)
+        except: pass
+    print(msg)
 
-def run_web():
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+def get_data():
+    df = yf.download("GC=F", period="2d", interval="15m", progress=False, auto_adjust=True)
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    return df.dropna()
 
-threading.Thread(target=run_web, daemon=True).start()
+sent_orb = None
+trade = None  # {'dir':, 'entry':, 'sl':, 'tp1':, 'tp2':, 'booked': False}
 
-# --- 2. TOKEN / CHAT_ID - Dono naam chalega ---
-TOKEN = os.getenv("TOKEN") or os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+send("✅ V7.2 FINAL START - GOLD 1:3 | Retest + Partial Booking ON")
 
-# CHAT_ID ko yaad rakhne ke liye, jab tu /start bhejega to auto-save ho jayega
-CURRENT_CHAT_ID = CHAT_ID
-LAST_UPDATE_ID = 0
-
-def send(msg, chat_id=None):
-    target = chat_id or CURRENT_CHAT_ID or CHAT_ID
-    if not TOKEN or not target:
-        print("TOKEN/CHAT_ID missing in Render Env")
-        return
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+while True:
     try:
-        requests.post(url, data={"chat_id": target, "text": msg, "parse_mode": "Markdown"}, timeout=10)
+        df = get_data()
+        # Aaj ka data - UTC me 08:00 = IST 1:30
+        today = df.index[-1].date()
+        day = df[df.index.date == today]
+        # ORB banao
+        orb = day[day.index.hour == 8]
+        if len(orb) >= 2:
+            orb_high = float(orb['High'].max()); orb_low = float(orb['Low'].min())
+            rng = orb_high - orb_low
+            key = f"{today}_{orb_high}_{orb_low}"
+            if sent_orb != key and 8 <= rng <= 35:
+                sent_orb = key
+                send(f"🟡 GOLD ORB BAN GAYA\nHigh: {orb_high:.1f}\nLow: {orb_low:.1f}\nRange: {rng:.1f}$\nAb Breakout + Retest ka wait hai. Bina Retest ke NO ENTRY.")
+            
+            # Live price
+            last = day.iloc[-1]
+            price = float(last['Close']); low = float(last['Low']); high = float(last['High'])
+
+            # Agar koi trade nahi hai, to Breakout + Retest dhoondo
+            if trade is None and 8 <= rng <= 35:
+                # Simple logic: Price ORB ke bahar band hua aur wapas ORB ke paas aaya
+                # Yahan hum 15m candle close pe check kar rahe hai
+                if price > orb_high and low <= orb_high + 1.5:
+                    # BUY Retest mil gaya
+                    entry = price; sl = orb_low
+                    risk = entry - sl
+                    tp1 = entry + risk * 2  # 1:2
+                    tp2 = entry + risk * 3  # 1:3
+                    trade = {'dir':'BUY','entry':entry,'sl':sl,'tp1':tp1,'tp2':tp2,'booked':False}
+                    send(f"🚀 GOLD BUY ENTRY - V7.2\nEntry: {entry:.1f}\nSL: {sl:.1f}\nTP1 (1:2): {tp1:.1f} - Yahan 50% Book\nTP2 (1:3): {tp2:.1f} - Yahan Baaki Book\nRisk: {risk:.1f}$")
+                elif price < orb_low and high >= orb_low - 1.5:
+                    entry = price; sl = orb_high
+                    risk = sl - entry
+                    tp1 = entry - risk * 2
+                    tp2 = entry - risk * 3
+                    trade = {'dir':'SELL','entry':entry,'sl':sl,'tp1':tp1,'tp2':tp2,'booked':False}
+                    send(f"🔻 GOLD SELL ENTRY - V7.2\nEntry: {entry:.1f}\nSL: {sl:.1f}\nTP1 (1:2): {tp1:.1f}\nTP2 (1:3): {tp2:.1f}\nRisk: {risk:.1f}$")
+
+            # Agar trade chal raha hai, to TP1 / TP2 / SL check karo
+            if trade is not None:
+                d = trade['dir']
+                if d == 'BUY':
+                    if not trade['booked'] and high >= trade['tp1']:
+                        trade['booked'] = True; trade['sl'] = trade['entry']
+                        send(f"✅ GOLD TP1 HIT (1:2)\nPrice: {trade['tp1']:.1f}\n50% Profit Book Karo!\nSL ko Entry ({trade['entry']:.1f}) pe le aao. Ab trade NO LOSS hai.\nNext Target TP2: {trade['tp2']:.1f}")
+                    elif trade['booked'] and high >= trade['tp2']:
+                        send(f"🎉 GOLD TP2 HIT (1:3) - FULL PROFIT!\nPrice: {trade['tp2']:.1f}\nBaaki 50% bhi Book Karo. Trade Khatam.")
+                        trade = None
+                    elif low <= trade['sl']:
+                        if trade['booked']:
+                            send(f"➡️ GOLD SL TO ENTRY HIT - No Loss, TP1 Profit Safe Hai.")
+                        else:
+                            send(f"❌ GOLD SL HIT - Loss: {trade['entry']-trade['sl']:.1f}$")
+                        trade = None
+                else: # SELL
+                    if not trade['booked'] and low <= trade['tp1']:
+                        trade['booked'] = True; trade['sl'] = trade['entry']
+                        send(f"✅ GOLD TP1 HIT (1:2)\nPrice: {trade['tp1']:.1f}\n50% Profit Book Karo!\nSL to Entry. Ab NO LOSS.")
+                    elif trade['booked'] and low <= trade['tp2']:
+                        send(f"🎉 GOLD TP2 HIT (1:3) - FULL PROFIT!\nPrice: {trade['tp2']:.1f}")
+                        trade = None
+                    elif high >= trade['sl']:
+                        if trade['booked']:
+                            send(f"➡️ GOLD SL TO ENTRY HIT - No Loss.")
+                        else:
+                            send(f"❌ GOLD SL HIT - Loss: {trade['sl']-trade['entry']:.1f}$")
+                        trade = None
     except Exception as e:
-        print(e)
-
-def get_data(symbol, period="2d", interval="15m"):
-    try:
-        df = yf.download(symbol, period=period, interval=interval, progress=False, auto_adjust=True)
-        if df.empty:
-            return None
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        return df
-    except:
-        return None
-
-def check_initial_balance():
-    try:
-        df = get_data("NQ=F", period="2d", interval="30m")
-        if df is None:
-            return
-        high = float(df['High'].iloc[-2])
-        low = float(df['Low'].iloc[-2])
-        close = float(df['Close'].iloc[-1])
-        if close > high:
-            send(f"🔔 *STAR PRO - Umar IB Breakout*\n\n*Pair:* Nasdaq US100\n*Setup:* Initial Balance Breakout - BUY\n*Range High:* {high:.1f} toda\n*Entry:* {close:.1f}\n*SL:* {low:.1f}\n*Target:* {close + (high-low)*2:.1f}\n*Time:* {datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%I:%M %p')}")
-        elif close < low:
-            send(f"🔔 *STAR PRO - Umar IB Breakout*\n\n*Pair:* Nasdaq US100\n*Setup:* Initial Balance Breakdown - SELL\n*Range Low:* {low:.1f} toda\n*Entry:* {close:.1f}\n*SL:* {high:.1f}\n*Target:* {close - (high-low)*2:.1f}")
-    except Exception as e:
-        print("IB Error", e)
-
-def check_gold():
-    try:
-        df = get_data("GC=F", period="2d", interval="1h")
-        if df is None:
-            return
-        last = df.iloc[-1]
-        prev_high = float(df['High'].iloc[-25:-1].max())
-        prev_low = float(df['Low'].iloc[-25:-1].min())
-        price = float(last['Close'])
-        fib50 = (prev_high + prev_low) / 2
-        
-        if abs(price - fib50) / fib50 < 0.002:
-            send(f"🔔 *STAR PRO - Gold 50% Fib*\n\n*Pair:* GOLD XAU/USD\n*Setup:* Fib 50% Retracement\n*Price:* {price:.2f}\n*Fib 50%:* {fib50:.2f}\n*Prev High:* {prev_high:.2f}\n*Prev Low:* {prev_low:.2f}\n*Bias:* BUY if upar bounce mare, SELL if neeche tode\n*SL:* {price-15:.2f} / {price+15:.2f}")
-        
-        if price > prev_high:
-            send(f"🔔 *STAR PRO - Gold Breakout*\n\n*Pair:* GOLD\n*Setup:* Previous High Breakout - BUY\n*Price:* {price:.2f} ne {prev_high:.2f} toda")
-        elif price < prev_low:
-            send(f"🔔 *STAR PRO - Gold Breakdown*\n\n*Pair:* GOLD\n*Setup:* Previous Low Breakdown - SELL\n*Price:* {price:.2f} ne {prev_low:.2f} toda")
-    except Exception as e:
-        print("Gold Error", e)
-
-def hourly_update():
-    try:
-        gold = get_data("GC=F", period="1d", interval="1h")
-        nas = get_data("NQ=F", period="1d", interval="1h")
-        if gold is None:
-            return
-        gp = float(gold['Close'].iloc[-1])
-        np_ = float(nas['Close'].iloc[-1]) if nas is not None else 0
-        send(f"⏰ *HOURLY UPDATE - STAR PRO*\n\n*GOLD:* ${gp:.2f}\n*NASDAQ:* {np_:.1f}\n*Time:* {datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%I:%M %p IST')}\n\nUmar IB + Gold Fib dono active hai. Setup bante hi alert aayega.")
-    except Exception as e:
-        print(e)
-
-# --- 3. /start SUNNE WALA PART - Ye pehle nahi tha, isliye reply nahi aa raha tha ---
-def listen_for_start():
-    global CURRENT_CHAT_ID, LAST_UPDATE_ID
-    while True:
-        try:
-            if not TOKEN:
-                time.sleep(5)
-                continue
-            url = f"https://api.telegram.org/bot{TOKEN}/getUpdates?timeout=20&offset={LAST_UPDATE_ID + 1}"
-            r = requests.get(url, timeout=25).json()
-            if not r.get("ok"):
-                time.sleep(5)
-                continue
-            for upd in r.get("result", []):
-                LAST_UPDATE_ID = upd["update_id"]
-                msg = upd.get("message", {})
-                text = msg.get("text", "")
-                chat_id = msg.get("chat", {}).get("id")
-                if not chat_id:
-                    continue
-                # Pehli baar /start aaye to usi chat ko pakad lo
-                CURRENT_CHAT_ID = str(chat_id)
-                if text == "/start":
-                    send("✅ *STAR PRO V5 LIVE HAI BHAI*\n\nDono strategy ON hai:\n1. Umar Initial Balance - Nasdaq\n2. Gold Fib 50% + Breakout\n\nAb setup bante hi alert aayega.\n\nMarket band hai to aaj signal nahi aayega, Monday ko aayega.", chat_id=chat_id)
-                elif text == "/status":
-                    send("✅ *Bot Live Hai*\nGold + Nasdaq dono check ho raha hai har 15 min me.", chat_id=chat_id)
-        except Exception as e:
-            print("Polling Error", e)
-            time.sleep(5)
-
-if __name__ == "__main__":
-    threading.Thread(target=listen_for_start, daemon=True).start()
-    # Pehle wala start msg - agar CHAT_ID pehle se hai to wahan bhi jayega
-    send("✅ *STAR PRO V5 START HO GAYA*\n\nDono strategy ON hai:\n1. Umar Initial Balance - Nasdaq\n2. Gold Fib 50% + Breakout\n\nAb setup bante hi alert aayega bhai.")
-    last_hourly = -1
-    while True:
-        now = datetime.now(pytz.timezone('Asia/Kolkata'))
-        check_initial_balance()
-        check_gold()
-        if now.minute < 15 and now.hour != last_hourly:
-            hourly_update()
-            last_hourly = now.hour
-        time.sleep(900)
+        print("Error:", e)
+    time.sleep(60) # Har 1 min me check karega
