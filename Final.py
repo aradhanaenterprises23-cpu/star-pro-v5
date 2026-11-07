@@ -10,7 +10,8 @@ def home():
 def run_web():
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
 
-threading.Thread(target=run_web, daemon=True).start()import os, time, requests, yfinance as yf
+threading.Thread(target=run_web, daemon=True).start()
+import os, time, requests, yfinance as yf
 import pandas as pd
 from datetime import datetime, timedelta
 import pytz
