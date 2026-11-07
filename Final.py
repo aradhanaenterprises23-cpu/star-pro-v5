@@ -1,4 +1,16 @@
-import os, time, requests, yfinance as yf
+import threading
+from flask import Flask
+
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is Live"
+
+def run_web():
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+
+threading.Thread(target=run_web, daemon=True).start()import os, time, requests, yfinance as yf
 import pandas as pd
 from datetime import datetime, timedelta
 import pytz
