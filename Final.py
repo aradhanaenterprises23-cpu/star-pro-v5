@@ -104,4 +104,4 @@ send("✅ V7.3 DEPLOY HO GAYA - 1:3 Retest Wala, Free Mode")
 while True:
     check_updates()
     check_gold()
-    time.sleep(900)
+    time.sleep(5)
