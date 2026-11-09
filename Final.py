@@ -1,112 +1,77 @@
-import time, requests, yfinance as yf, pandas as pd
-from datetime import datetime, timezone
-import os, threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import os, time, requests
+from datetime import datetime, timezone, timedelta
 
-# --- RENDER FREE WEB SERVICE KE LIYE PORT JUGAAD ---
-def start_dummy_server():
-    try:
-        port = int(os.environ.get("PORT", 10000))
-        class H(BaseHTTPRequestHandler):
-            def do_GET(self):
-                self.send_response(200); self.end_headers(); self.wfile.write(b"V7.3 BOT LIVE HAI")
-            def log_message(self, *a): pass
-        HTTPServer(("0.0.0.0", port), H).serve_forever()
-    except Exception as e:
-        print("dummy server err", e)
-
-threading.Thread(target=start_dummy_server, daemon=True).start()
-# --- JUGAAD KHATAM ---
-
-TOKEN = os.environ.get("TOKEN")
-CHAT_ID = os.environ.get("CHAT_ID")
-BASE = f"https://api.telegram.org/bot{TOKEN}"
-
-last_trade_date = None
-last_update_id = 0  # <-- YE NAYA HAI, ISSE SPAM RUKEGA
+TOKEN = os.getenv("TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
+URL = f"https://api.telegram.org/bot{TOKEN}"
 
 def send(msg):
     try:
-        requests.post(f"{BASE}/sendMessage", json={"chat_id": CHAT_ID, "text": msg}, timeout=10)
+        requests.post(f"{URL}/sendMessage", json={"chat_id": CHAT_ID, "text": msg}, timeout=15)
+        print(f"SENT: {msg[:40]}", flush=True)
     except Exception as e:
-        print("send fail", e)
+        print(f"send fail: {e}", flush=True)
 
-def check_gold():
-    global last_trade_date
+def get_gold_price():
+    # Yahoo se live GOLD price
     try:
-        now_utc = datetime.now(timezone.utc)
-        today = now_utc.date()
-        if last_trade_date == today:
-            return
-        df = yf.download("GC=F", period="5d", interval="15m", progress=False, auto_adjust=True)
-        if df.empty or len(df) < 20: return
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        df = df.dropna()
-        df['date'] = df.index.date
-        df['hour'] = df.index.hour
-        day = df[df['date'] == today].copy()
-        if len(day) < 10: return
-        orb = day[day['hour'] == 8]
-        if len(orb) < 2: return
-        orb_high = float(orb['High'].max())
-        orb_low = float(orb['Low'].min())
-        rng = orb_high - orb_low
-        if rng < 8 or rng > 35: return
-        after = day[day['hour'] >= 9].reset_index(drop=True)
-        if len(after) < 5: return
-        breakout_idx = -1; direction = None
-        for i in range(len(after)):
-            c = float(after['Close'].iloc[i])
-            if c > orb_high:
-                direction="BUY"; breakout_idx=i; break
-            elif c < orb_low:
-                direction="SELL"; breakout_idx=i; break
-        if breakout_idx == -1: return
-        entry=None; entry_idx=-1
-        for j in range(breakout_idx+1, min(breakout_idx+7, len(after))):
-            close=float(after['Close'].iloc[j]); low=float(after['Low'].iloc[j]); high=float(after['High'].iloc[j])
-            if direction=="BUY" and low <= orb_high+1.5 and close > orb_high:
-                entry=close; entry_idx=j; break
-            if direction=="SELL" and high >= orb_low-1.5 and close < orb_low:
-                entry=close; entry_idx=j; break
-        if entry is None: return
-        RR = 3
-        if direction=="BUY":
-            sl=orb_low; tp=entry+(entry-sl)*RR
-        else:
-            sl=orb_high; tp=entry-(sl-entry)*RR
-        last_trade_date = today
-        risk = abs(entry - sl)
-        msg = f"🔥 GOLD V7.3 - 1:3 RETEST\nDirection: {direction}\nEntry: {entry:.1f}\nSL: {sl:.1f} (Risk {risk:.1f}$)\nTP: {tp:.1f} (Reward {abs(tp-entry):.1f}$)\nRR: 1:3 ✅\nORB: {orb_low:.1f} - {orb_high:.1f} Range {rng:.1f}$\nBacktest: 1:3 pe 42.9% Win, PnL +175.8$"
-        send(msg)
-        print("GOLD sent", msg)
+        r = requests.get("https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=15m&range=1d", headers={"User-Agent": "Mozilla/5.0"}, timeout=15).json()
+        closes = r["chart"]["result"][0]["indicators"]["quote"][0]["close"]
+        closes = [c for c in closes if c is not None]
+        return closes
     except Exception as e:
-        print("gold err", e)
+        print(f"gold err: {e}", flush=True)
+        return []
 
-def check_updates():
-    global last_update_id
-    try:
-        # offset bhej rahe hai taaki purana /start dobara na aaye
-        params = {"timeout": 5}
-        if last_update_id != 0:
-            params["offset"] = last_update_id + 1
-        r = requests.get(f"{BASE}/getUpdates", params=params, timeout=10).json()
-        for u in r.get("result", []):
-            last_update_id = u.get("update_id", last_update_id)
-            msg = u.get("message", {})
-            txt = msg.get("text", "")
-            if txt == "/start":
-                send("✅ GOLD V7.3 LIVE - 1:3 Retest Wala\nORB + Retest + 1:3, Backtest 175.8$")
-            if txt == "/status":
-                send("✅ BOT ZINDA HAI - V7.3 1:3 Chal raha hai")
-    except Exception as e:
-        print("poll err", e)
-
-print("V7.3 1:3 STARTED - FREE WEB SERVICE MODE")
+# --- 1. STARTUP - SIRF 1 BAAR ---
 send("✅ V7.3 DEPLOY HO GAYA - 1:3 Retest Wala, Free Mode")
+print("V7.3 1:3 STARTED...", flush=True)
+
+last_update_id = 0
+signal_sent_date = ""  # aaj signal bheja ya nahi, isko yaad rakhega
 
 while True:
-    check_updates()
-    check_gold()
-    time.sleep(5)
+    try:
+        # --- 2. /status CHECK - sirf jab tu bhejega ---
+        r = requests.get(f"{URL}/getUpdates", params={"offset": last_update_id + 1, "timeout": 5}, timeout=15).json()
+        for u in r.get("result", []):
+            last_update_id = u["update_id"]
+            text = u.get("message", {}).get("text", "")
+            if text == "/status":
+                send("✅ BOT ZINDA HAI - V7.3 1:3 Chal raha hai")
+
+        # --- 3. GOLD SIGNAL LOGIC ---
+        now_ist = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+        today = now_ist.strftime("%Y-%m-%d")
+        hour_min = now_ist.hour * 60 + now_ist.minute
+
+        # Sirf 14:30 se 20:00 ke beech check karega, aur din me 1 baar
+        if 870 <= hour_min <= 1200 and signal_sent_date != today:
+            prices = get_gold_price()
+            if len(prices) >= 4:
+                # ORB: Pehli 2 candle (14:30-15:00) ka High-Low
+                orb_high = max(prices[0:2])
+                orb_low = min(prices[0:2])
+                live = prices[-1]
+
+                # Retest: Price wapas ORB High ke paas aaye aur upar nikle = BUY
+                # Ya ORB Low ke paas aaye aur neeche nikle = SELL
+                signal = None
+                if live > orb_high and abs(live - orb_high) < 5:
+                    sl = orb_low
+                    tp = live + (live - sl) * 3  # 1:3
+                    signal = f"🟢 GOLD V7.3 BUY\nEntry: {live:.2f}\nSL: {sl:.2f}\nTP: {tp:.2f} (1:3)\nLogic: ORB Break + Retest"
+                elif live < orb_low and abs(live - orb_low) < 5:
+                    sl = orb_high
+                    tp = live - (sl - live) * 3
+                    signal = f"🔴 GOLD V7.3 SELL\nEntry: {live:.2f}\nSL: {sl:.2f}\nTP: {tp:.2f} (1:3)\nLogic: ORB Break + Retest"
+
+                if signal:
+                    send(signal)
+                    signal_sent_date = today  # aaj ke liye lock, dobara nahi bhejega
+
+        time.sleep(60)  # 60 sec rukega, isliye spam impossible hai
+
+    except Exception as e:
+        print(f"loop err: {e}", flush=True)
+        time.sleep(60)
