@@ -20,9 +20,8 @@ def start_dummy_server():
 threading.Thread(target=start_dummy_server, daemon=True).start()
 # --- JUGAAD KHATAM ---
 
-TOKEN = "9234882209:AAGcg0CgC6LEO86iWgeAtrLZ3IeQSHfRTBc  
-"
-CHAT_ID = "1329514730"
+TOKEN = os.environ.get("TOKEN")
+CHAT_ID = os.environ.get("CHAT_ID")
 BASE = f"https://api.telegram.org/bot{TOKEN}"
 
 last_trade_date = None
