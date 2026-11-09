@@ -4,8 +4,6 @@ import os, threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # --- RENDER FREE WEB SERVICE KE LIYE PORT JUGAAD ---
-# Render ko port chahiye, isliye ek chhota server chala rahe hai
-# Isse 7$ wala Background Worker nahi lena padega
 def start_dummy_server():
     try:
         port = int(os.environ.get("PORT", 10000))
@@ -25,6 +23,7 @@ CHAT_ID = os.environ.get("CHAT_ID")
 BASE = f"https://api.telegram.org/bot{TOKEN}"
 
 last_trade_date = None
+last_update_id = 0  # <-- YE NAYA HAI, ISSE SPAM RUKEGA
 
 def send(msg):
     try:
@@ -86,9 +85,15 @@ def check_gold():
         print("gold err", e)
 
 def check_updates():
+    global last_update_id
     try:
-        r = requests.get(f"{BASE}/getUpdates", params={"timeout": 5}, timeout=10).json()
+        # offset bhej rahe hai taaki purana /start dobara na aaye
+        params = {"timeout": 5}
+        if last_update_id != 0:
+            params["offset"] = last_update_id + 1
+        r = requests.get(f"{BASE}/getUpdates", params=params, timeout=10).json()
         for u in r.get("result", []):
+            last_update_id = u.get("update_id", last_update_id)
             msg = u.get("message", {})
             txt = msg.get("text", "")
             if txt == "/start":
