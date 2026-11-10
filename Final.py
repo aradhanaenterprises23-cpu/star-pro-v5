@@ -1,3 +1,16 @@
+import os, threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+def keep_alive():
+    port = int(os.environ.get("PORT", 10000))
+    class H(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200); self.end_headers()
+            self.wfile.write(b"Bot is Alive")
+        def log_message(self, *a): pass
+    threading.Thread(target=HTTPServer(("0.0.0.0", port), H).serve_forever, daemon=True).start()
+
+keep_alive()
 import os, time, requests
 from datetime import datetime, timezone, timedelta
 
